@@ -1,0 +1,37 @@
+name: Deploy Entry
+on:
+  workflow_dispatch:
+    inputs:
+      google_email:
+        description: Google email allowed to manage Entry
+        required: true
+        type: string
+      google_client_id:
+        description: Google Web client ID (not the client secret)
+        required: true
+        type: string
+        default: 165034444115-dn5769a0n2bt51lblagpbkcegd1l5g6l.apps.googleusercontent.com
+permissions:
+  contents: read
+concurrency:
+  group: entry-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check deployment token
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: test -n "$FLY_API_TOKEN" || { echo 'Add the FLY_API_TOKEN repository secret first.'; exit 1; }
+      - name: Finish migration or update the app
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          ENTRY_GOOGLE_EMAIL: ${{ inputs.google_email }}
+          GOOGLE_CLIENT_ID: ${{ inputs.google_client_id }}
+        run: python deploy/finish.py

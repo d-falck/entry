@@ -1,0 +1,5 @@
+ring-doorbell==0.9.14
+aiortc==1.14.0
+
+google-auth>=2.38,<3
+requests>=2.32,<3
