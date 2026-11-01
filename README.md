@@ -110,10 +110,12 @@ plain HTTP. `DATA_DIR` selects persistent data and defaults to `data`.
 
 ## Verification
 
-39 backend tests pass: schedule boundaries, weekly overnight rules, London daylight
+44 backend tests pass: schedule boundaries, weekly overnight rules, London daylight
 saving, ambiguous/nonexistent one-off clock times, overlapping windows, pause and
 resume, cookie/CSRF restrictions, Google email allowlisting, setup-key retirement,
-nonce checks, durable sessions, event deduplication and direct unlock behavior.
+nonce checks, durable sessions, event deduplication, direct unlock behavior and
+deployment guards. The deployment ZIP is checked against the installed startup
+script's expected directory layout.
 Browser visual QA and live Google sign-in remain to be verified after deployment.
 The existing polling/unlock path was physically tested successfully before this
 interface update.

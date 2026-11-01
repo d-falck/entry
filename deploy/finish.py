@@ -58,10 +58,24 @@ def bundle():
     with zipfile.ZipFile(buffer,'w',zipfile.ZIP_DEFLATED) as archive:
         for name in ['handler.py','worker.py','speech.py','server.py','ring_access.py',
                      'scheduling.py','google_login.py','requirements-lock.txt','requirements.txt']:
-            archive.write(ROOT/name,name)
+            archive.write(ROOT/name,'ring-handler/'+name)
         for path in sorted((ROOT/'web').rglob('*')):
-            if path.is_file(): archive.write(path,str(path.relative_to(ROOT)))
+            if path.is_file(): archive.write(path,'ring-handler/'+str(path.relative_to(ROOT)))
     return base64.b64encode(buffer.getvalue()).decode()
+
+
+def prepare_inspection():
+    """Start a worker-free maintenance process, even if the previous boot failed."""
+    config = api(f'/v1/apps/{APP}/machines/{MACHINE}')['config']
+    config['files'] = [f for f in config['files'] if f['guest_path'] != '/opt/entry-transfer.zip']
+    config['init'] = {'exec':['python','-c','import time;time.sleep(3600)']}
+    api(f'/v1/apps/{APP}/machines/{MACHINE}',{'config':config})
+    for _ in range(30):
+        try:
+            if remote(APP,MACHINE,"print('ready')") == 'ready': return
+        except Exception: pass
+        time.sleep(2)
+    raise RuntimeError('Cannot inspect new machine; original worker remains unchanged')
 
 
 def deploy_source():
@@ -70,6 +84,7 @@ def deploy_source():
     config['files'] = [f for f in config['files'] if f['guest_path'] != '/opt/entry-transfer.zip']
     source = next(f for f in config['files'] if f['guest_path']=='/opt/ring-source.zip')
     source['raw_value'] = bundle()
+    config['init'] = {'exec':['/bin/sh','/opt/bootstrap.sh']}
     api(f'/v1/apps/{APP}/machines/{MACHINE}',{'config':config})
     ready(APP,MACHINE)
 
@@ -94,6 +109,8 @@ def finish():
         raise RuntimeError('Supply the allowed Google email and Google Client ID')
     # Hide inputs if a dependency unexpectedly prints them later.
     print('::add-mask::'+email,flush=True)
+    print('Inspecting new machine without starting its entry worker.',flush=True)
+    prepare_inspection()
     checkpoint = json.loads(remote(APP,MACHINE,
         f"import json;from pathlib import Path;p=Path({CHECKPOINT!r});print(p.read_text() if p.exists() else '{{}}')"))
     if checkpoint.get('complete'):
@@ -104,11 +121,15 @@ def finish():
     paused = remote(APP,MACHINE,"import sqlite3,json;d=sqlite3.connect('/data/state.sqlite');s=json.loads(d.execute('SELECT body FROM settings WHERE id=1').fetchone()[0]);print(s.get('paused') is True)")
     if paused != 'True':
         raise RuntimeError('New worker must be paused before the initial migration')
+    print('Updating source; original entry worker is unchanged.',flush=True)
     deploy_source()
-    connection = json.loads(remote(APP,MACHINE,"""import os,json,urllib.request
+    for _ in range(30):
+        connection = json.loads(remote(APP,MACHINE,"""import os,json,urllib.request
 r=urllib.request.Request('http://127.0.0.1:8080/api/status',headers={'Authorization':'Bearer '+os.environ['ADMIN_TOKEN']})
 d=json.load(urllib.request.urlopen(r,timeout=5));print(json.dumps({'connection':d['connection'],'has_devices':bool(d['devices'])}))
 """))
+        if connection == {'connection':'listening','has_devices':True}: break
+        time.sleep(2)
     if connection != {'connection':'listening','has_devices':True}:
         raise RuntimeError('New worker cannot reach Ring. Original worker remains unchanged.')
     if not checkpoint:
@@ -119,6 +140,7 @@ d=json.load(urllib.request.urlopen(r,timeout=5));print(json.dumps({'connection':
         checkpoint = {'settings':latest,'complete':False}
         remote(APP,MACHINE,f"import os;from pathlib import Path;os.umask(0o077);Path({CHECKPOINT!r}).write_text({json.dumps(checkpoint)!r})")
     old = api(f'/v1/apps/{OLD_APP}/machines/{OLD_MACHINE}')
+    print('Ring connection confirmed; replacing old worker with a redirect.',flush=True)
     api(f'/v1/apps/{OLD_APP}/machines/{OLD_MACHINE}',{'config':redirect_config(old['config'])})
     # Confirm the old entry process has been replaced before activating the new one.
     for _ in range(60):
